@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,8 +15,12 @@ try:
 except ImportError:  # pragma: no cover
     YoutubeDL = None
 
-TEMP_DIR = Path("tmp_downloads")
-TEMP_DIR.mkdir(exist_ok=True)
+
+def _get_temp_dir() -> Path:
+    # Vercel serverless filesystem is read-only except /tmp.
+    if os.getenv("VERCEL"):
+        return Path("/tmp") / "tmp_downloads"
+    return Path(tempfile.gettempdir()) / "clipnest_tmp_downloads"
 
 
 @dataclass
@@ -90,7 +96,9 @@ async def run_fake_download(job_id: str, source_url: str, platform: str, format_
         if selected_format is None:
             raise RuntimeError(f"Unsupported format: {format_id}")
 
-        outtmpl = str((TEMP_DIR / f"{job_id}.%(ext)s").resolve())
+        temp_dir = _get_temp_dir()
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        outtmpl = str((temp_dir / f"{job_id}.%(ext)s").resolve())
 
         def progress_hook(data: dict) -> None:
             status = data.get("status")
@@ -128,7 +136,7 @@ async def run_fake_download(job_id: str, source_url: str, platform: str, format_
 
         final_path = Path(downloaded_path)
         if not final_path.exists():
-            matches = sorted(TEMP_DIR.glob(f"{job_id}.*"))
+            matches = sorted(temp_dir.glob(f"{job_id}.*"))
             if not matches:
                 raise RuntimeError("Download finished but output file not found.")
             final_path = matches[0]
