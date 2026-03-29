@@ -81,3 +81,36 @@ Open http://localhost:5173.
 - **TikTok**: Real download is enabled but may fail with "IP blocked" error due to TikTok's anti-scraping measures. This is a platform-level restriction, not an application issue. If TikTok's API becomes available or proxies are configured, downloads will work automatically.
 - Temporary files are created in `backend/tmp_downloads/` with automatic cleanup.
 
+## Deploy to Vercel
+
+Deploy backend and frontend as two separate Vercel projects.
+
+### 1. Deploy backend (FastAPI)
+
+1. In Vercel, create a new project from this repo.
+2. Set **Root Directory** to `backend`.
+3. Keep default build settings (Vercel will use `backend/vercel.json`).
+4. Add environment variable:
+	- `CORS_ALLOW_ORIGINS=https://your-frontend.vercel.app`
+5. Deploy and copy backend URL, for example:
+	- `https://your-backend.vercel.app`
+
+### 2. Deploy frontend (Vite)
+
+1. In Vercel, create another project from the same repo.
+2. Set **Root Directory** to `frontend`.
+3. Framework preset: `Vite`.
+4. Add environment variable:
+	- `VITE_API_BASE=https://your-backend.vercel.app/api/v1`
+5. Deploy.
+
+### 3. Verify
+
+1. Open frontend URL and resolve/download a YouTube URL.
+2. Check backend health at:
+	- `https://your-backend.vercel.app/health`
+
+### Important Vercel limitation
+
+Vercel Serverless Functions have execution time and ephemeral filesystem limits. Long video downloads may fail or timeout in production. For heavy download workloads, deploy backend on a long-running server (Railway/Render/Fly.io/VM) and keep frontend on Vercel.
+
