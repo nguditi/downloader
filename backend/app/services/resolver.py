@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import logging
 import re
-from urllib.parse import urlparse
+import json
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request, urlopen
 
 from app.models.schemas import Platform, ResolveUrlResponse, VideoFormat
 
@@ -40,6 +43,25 @@ def _metadata_snapshot(info: dict) -> dict:
         "extractor": info.get("extractor"),
         "webpage_url": info.get("webpage_url"),
     }
+
+
+def _youtube_thumbnail(video_id: str | None) -> str:
+    if video_id:
+        return f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+    return "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
+
+
+def _looks_like_youtube_bot_block(message: str) -> bool:
+    msg = message.lower()
+    return "sign in to confirm you're not a bot" in msg or "sign in to confirm you\u2019re not a bot" in msg
+
+
+def _fetch_youtube_oembed(url: str) -> tuple[str | None, str | None]:
+    endpoint = f"https://www.youtube.com/oembed?{urlencode({'url': url, 'format': 'json'})}"
+    request = Request(endpoint, headers={"User-Agent": "Mozilla/5.0 (compatible; ClipNestResolver/1.0)"})
+    with urlopen(request, timeout=8) as resp:  # nosec B310 - URL is fixed to YouTube oEmbed endpoint.
+        payload = json.loads(resp.read().decode("utf-8"))
+    return payload.get("title"), payload.get("thumbnail_url")
 
 
 def extract_youtube_id(url: str) -> str | None:
@@ -134,10 +156,7 @@ def _extract_youtube_metadata(url: str) -> tuple[str, str, int]:
             duration = info.get("duration", 0) or 0
             # Fetch high-quality thumbnail
             video_id = extract_youtube_id(url) or info.get("id")
-            if video_id:
-                thumbnail = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
-            else:
-                thumbnail = "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg"
+            thumbnail = _youtube_thumbnail(video_id)
             if title == "YouTube Video" or int(duration) == 0:
                 logger.warning(
                     "resolve.youtube.partial_metadata url=%s title=%s duration=%s video_id=%s",
@@ -149,8 +168,30 @@ def _extract_youtube_metadata(url: str) -> tuple[str, str, int]:
             return title, thumbnail, int(duration)
     except Exception as exc:
         logger.exception("resolve.youtube.extract.failed url=%s error=%s", _url_for_log(url), exc)
-        # Fallback on extractor error
-        return "YouTube Video", "https://img.youtube.com/vi/dQw4w9WgXcQ/hqdefault.jpg", 0
+        message = str(exc)
+        video_id = extract_youtube_id(url)
+        thumbnail = _youtube_thumbnail(video_id)
+
+        if _looks_like_youtube_bot_block(message):
+            logger.warning("resolve.youtube.bot_block_detected url=%s video_id=%s", _url_for_log(url), video_id)
+            try:
+                title, oembed_thumbnail = _fetch_youtube_oembed(url)
+                logger.info(
+                    "resolve.youtube.oembed.success url=%s title_present=%s thumbnail_present=%s",
+                    _url_for_log(url),
+                    bool(title),
+                    bool(oembed_thumbnail),
+                )
+                return title or "YouTube Video", oembed_thumbnail or thumbnail, 0
+            except (HTTPError, URLError, TimeoutError, ValueError) as oembed_exc:
+                logger.warning(
+                    "resolve.youtube.oembed.failed url=%s error=%s",
+                    _url_for_log(url),
+                    oembed_exc,
+                )
+
+        # Generic extractor fallback
+        return "YouTube Video", thumbnail, 0
 
 
 def _extract_tiktok_metadata(url: str) -> tuple[str, str, int]:
