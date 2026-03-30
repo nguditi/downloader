@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -10,18 +12,31 @@ from app.services.jobs import create_job, get_job, run_fake_download, to_respons
 from app.services.resolver import resolve_video
 
 router = APIRouter(prefix="/api/v1", tags=["download"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/resolve", response_model=dict)
 def resolve_url(payload: dict) -> dict:
+    trace_id = uuid4().hex[:8]
     url = payload.get("url")
     if not isinstance(url, str) or not url:
+        logger.warning("resolve.request.invalid trace_id=%s payload_keys=%s", trace_id, list(payload.keys()))
         raise HTTPException(status_code=400, detail="Field 'url' is required")
 
     try:
+        logger.info("resolve.request.start trace_id=%s url=%s", trace_id, url)
         result = resolve_video(url)
+        logger.info(
+            "resolve.request.success trace_id=%s platform=%s title_present=%s thumbnail_present=%s duration=%s",
+            trace_id,
+            result.platform.value,
+            bool(result.title),
+            bool(result.thumbnail_url),
+            result.duration_seconds,
+        )
         return result.model_dump()
     except ValueError as exc:
+        logger.warning("resolve.request.failed trace_id=%s error=%s", trace_id, exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
